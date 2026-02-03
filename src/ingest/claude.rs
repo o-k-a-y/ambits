@@ -1,0 +1,573 @@
+use std::fs;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+use crate::tracking::ReadDepth;
+
+use super::AgentToolCall;
+
+/// Derive the Claude Code log directory for a given project path.
+/// Claude stores logs at ~/.claude/projects/<slug>/ where slug is the
+/// absolute path with `/` replaced by `-` and leading `-`.
+pub fn log_dir_for_project(project_path: &Path) -> Option<PathBuf> {
+    let canonical = project_path.canonicalize().ok()?;
+    let slug = canonical
+        .to_string_lossy()
+        .replace('/', "-");
+    let home = dirs_home()?;
+    let dir = home.join(".claude").join("projects").join(&slug);
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Find the most recent session ID. Tries sessions-index.json first (legacy),
+/// then falls back to scanning for UUID-named .jsonl files by modification time.
+pub fn find_latest_session(log_dir: &Path) -> Option<String> {
+    // Try sessions-index.json first (present in older Claude Code versions).
+    if let Some(session) = find_session_from_index(log_dir) {
+        return Some(session);
+    }
+    // Fall back: scan for UUID-named .jsonl files, pick most recent by mtime.
+    find_session_from_files(log_dir)
+}
+
+/// Try to find the latest session from sessions-index.json.
+fn find_session_from_index(log_dir: &Path) -> Option<String> {
+    let index_path = log_dir.join("sessions-index.json");
+    let data = fs::read_to_string(&index_path).ok()?;
+    let obj: Value = serde_json::from_str(&data).ok()?;
+    let entries = obj.get("entries")?.as_array()?;
+
+    entries
+        .iter()
+        .filter(|e| {
+            !e.get("isSidechain")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+        .max_by_key(|e| {
+            e.get("modified")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .and_then(|e| e.get("sessionId")?.as_str().map(|s| s.to_string()))
+}
+
+/// Find the latest session by scanning for UUID-named .jsonl files.
+fn find_session_from_files(log_dir: &Path) -> Option<String> {
+    let entries = fs::read_dir(log_dir).ok()?;
+
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            // Match UUID pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.jsonl
+            if !name.ends_with(".jsonl") {
+                return None;
+            }
+            let stem = name.strip_suffix(".jsonl")?;
+            if !is_uuid(stem) {
+                return None;
+            }
+            // Skip empty files.
+            let meta = fs::metadata(&path).ok()?;
+            if meta.len() == 0 {
+                return None;
+            }
+            let mtime = meta.modified().ok()?;
+            Some((stem.to_string(), mtime))
+        })
+        .max_by_key(|(_, mtime)| *mtime)
+        .map(|(session_id, _)| session_id)
+}
+
+/// Check if a string looks like a UUID (8-4-4-4-12 hex chars).
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let expected_lens = [8, 4, 4, 4, 12];
+    parts.iter().zip(expected_lens.iter()).all(|(part, &len)| {
+        part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit())
+    })
+}
+
+/// List all JSONL files in the log directory that belong to a session
+/// (the main session file + any agent-*.jsonl files that reference it).
+/// Supports both old format (agent files flat in log dir) and new format
+/// (agent files in `<session-id>/subagents/`).
+pub fn session_log_files(log_dir: &Path, session_id: &str) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+
+    // Main session file.
+    let main_file = log_dir.join(format!("{session_id}.jsonl"));
+    if main_file.exists() {
+        files.push(main_file);
+    }
+
+    // New format: <log_dir>/<session-id>/subagents/agent-*.jsonl
+    // All files in this directory belong to the session by definition.
+    let subagents_dir = log_dir.join(session_id).join("subagents");
+    if subagents_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&subagents_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if name.starts_with("agent-") && name.ends_with(".jsonl") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+
+    // Old format: <log_dir>/agent-*.jsonl (check sessionId in first lines).
+    if let Ok(entries) = fs::read_dir(log_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if name.starts_with("agent-")
+                && name.ends_with(".jsonl")
+                && agent_belongs_to_session(&path, session_id)
+            {
+                files.push(path);
+            }
+        }
+    }
+
+    files
+}
+
+fn agent_belongs_to_session(path: &Path, session_id: &str) -> bool {
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let reader = BufReader::new(file);
+    // Check first few lines for the sessionId.
+    for line in reader.lines().take(3).map_while(Result::ok) {
+        if let Ok(obj) = serde_json::from_str::<Value>(&line) {
+            if let Some(sid) = obj.get("sessionId").and_then(|v| v.as_str()) {
+                return sid == session_id;
+            }
+        }
+    }
+    false
+}
+
+/// Parse all events from a JSONL log file.
+pub fn parse_log_file(path: &Path) -> Vec<AgentToolCall> {
+    let mut events = Vec::new();
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return events,
+    };
+    let reader = BufReader::new(file);
+
+    // Derive a default agent ID from the filename.
+    let default_id = path
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    for line in reader.lines().map_while(Result::ok) {
+        events.extend(parse_jsonl_line(&line, &default_id));
+    }
+    events
+}
+
+/// Parse a single JSONL line from a Claude Code session log.
+/// Returns tool call events found in assistant messages.
+pub fn parse_jsonl_line(line: &str, default_agent_id: &str) -> Vec<AgentToolCall> {
+    let mut events = Vec::new();
+
+    let obj: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return events,
+    };
+
+    let msg_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if msg_type != "assistant" {
+        return events;
+    }
+
+    let agent_id = obj
+        .get("sessionId")
+        .and_then(|v| v.as_str())
+        .unwrap_or(default_agent_id)
+        .to_string();
+
+    let timestamp_str = obj
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let content = match obj.pointer("/message/content") {
+        Some(Value::Array(arr)) => arr,
+        _ => return events,
+    };
+
+    for block in content {
+        if block.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+            continue;
+        }
+
+        let tool_name = match block.get("name").and_then(|v| v.as_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        let input = block.get("input").cloned().unwrap_or(Value::Null);
+
+        if let Some(event) = map_tool_call(tool_name, &input, &agent_id, &timestamp_str) {
+            events.push(event);
+        }
+    }
+
+    events
+}
+
+/// Map a tool call to an AgentToolCall with appropriate ReadDepth.
+fn map_tool_call(
+    tool_name: &str,
+    input: &Value,
+    agent_id: &str,
+    timestamp_str: &str,
+) -> Option<AgentToolCall> {
+    let (file_path, depth, desc) = match tool_name {
+        // Full file reads.
+        "mcp__acp__Read" | "Read" => {
+            let path = input.get("file_path").and_then(|v| v.as_str())?;
+            (
+                Some(PathBuf::from(path)),
+                ReadDepth::FullBody,
+                format!("Read {}", short_path(path)),
+            )
+        }
+
+        // Edits imply the file was read.
+        "mcp__acp__Edit" | "Edit" => {
+            let path = input.get("file_path").and_then(|v| v.as_str())?;
+            (
+                Some(PathBuf::from(path)),
+                ReadDepth::FullBody,
+                format!("Edit {}", short_path(path)),
+            )
+        }
+
+        // Write implies full knowledge.
+        "mcp__acp__Write" | "Write" => {
+            let path = input.get("file_path").and_then(|v| v.as_str())?;
+            (
+                Some(PathBuf::from(path)),
+                ReadDepth::FullBody,
+                format!("Write {}", short_path(path)),
+            )
+        }
+
+        // Glob/find: name-level awareness.
+        "Glob" | "mcp__serena__find_file" | "mcp__serena__list_dir" => {
+            let pattern = input
+                .get("pattern")
+                .or_else(|| input.get("file_mask"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
+            (None, ReadDepth::NameOnly, format!("Glob {pattern}"))
+        }
+
+        // Grep/search: overview-level.
+        "Grep" | "mcp__serena__search_for_pattern" => {
+            let pattern = input
+                .get("pattern")
+                .or_else(|| input.get("substring_pattern"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            (None, ReadDepth::Overview, format!("Search \"{pattern}\""))
+        }
+
+        // Serena symbol overview.
+        "mcp__serena__get_symbols_overview" => {
+            let path = input.get("relative_path").and_then(|v| v.as_str());
+            (
+                path.map(PathBuf::from),
+                ReadDepth::Overview,
+                format!("Overview {}", path.unwrap_or("?")),
+            )
+        }
+
+        // Serena find_symbol: depth depends on include_body.
+        "mcp__serena__find_symbol" => {
+            let include_body = input
+                .get("include_body")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let name = input
+                .get("name_path_pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let path = input.get("relative_path").and_then(|v| v.as_str());
+            let depth = if include_body {
+                ReadDepth::FullBody
+            } else {
+                ReadDepth::Signature
+            };
+            (
+                path.map(PathBuf::from),
+                depth,
+                format!("Symbol {name}"),
+            )
+        }
+
+        _ => return None,
+    };
+
+    Some(AgentToolCall {
+        agent_id: agent_id.to_string(),
+        tool_name: tool_name.to_string(),
+        file_path,
+        read_depth: depth,
+        description: desc,
+        timestamp_str: timestamp_str.to_string(),
+    })
+}
+
+/// Shorten a file path for display (last 2 components).
+fn short_path(path: &str) -> String {
+    let p = Path::new(path);
+    let components: Vec<_> = p.components().rev().take(2).collect();
+    components
+        .into_iter()
+        .rev()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Incrementally tails a set of JSONL log files, tracking read positions.
+pub struct LogTailer {
+    files: Vec<PathBuf>,
+    positions: std::collections::HashMap<PathBuf, u64>,
+}
+
+impl LogTailer {
+    /// Create a tailer for the given log files, starting from the end of each
+    /// (i.e., only new lines will be read on subsequent calls).
+    pub fn new(files: Vec<PathBuf>) -> Self {
+        let mut positions = std::collections::HashMap::new();
+        for f in &files {
+            // Start at the current end of file so we only get new events.
+            if let Ok(meta) = fs::metadata(f) {
+                positions.insert(f.clone(), meta.len());
+            }
+        }
+        Self { files, positions }
+    }
+
+    /// Create a tailer that starts from the beginning (reads all existing content).
+    pub fn new_from_start(files: Vec<PathBuf>) -> Self {
+        let positions = files.iter().map(|f| (f.clone(), 0u64)).collect();
+        Self { files, positions }
+    }
+
+    /// Add a new file to tail (e.g., a newly created agent log).
+    pub fn add_file(&mut self, path: PathBuf) {
+        if !self.positions.contains_key(&path) {
+            self.positions.insert(path.clone(), 0);
+            self.files.push(path);
+        }
+    }
+
+    /// Read new lines from all tracked files since last read.
+    /// Returns any new agent tool call events.
+    pub fn read_new_events(&mut self) -> Vec<AgentToolCall> {
+        let mut events = Vec::new();
+
+        for file_path in &self.files {
+            let pos = self.positions.get(file_path).copied().unwrap_or(0);
+            let current_len = fs::metadata(file_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+
+            if current_len <= pos {
+                continue;
+            }
+
+            let default_id = file_path
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            if let Ok(file) = fs::File::open(file_path) {
+                use std::io::{Seek, SeekFrom};
+                let mut reader = BufReader::new(file);
+                if reader.seek(SeekFrom::Start(pos)).is_ok() {
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        match reader.read_line(&mut line) {
+                            Ok(0) => break,
+                            Ok(_) => {
+                                events.extend(parse_jsonl_line(line.trim(), &default_id));
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+
+            self.positions.insert(file_path.clone(), current_len);
+        }
+
+        events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_parse_read_tool_call() {
+        let line = r#"{"type":"assistant","sessionId":"abc-123","message":{"role":"assistant","content":[{"type":"tool_use","name":"mcp__acp__Read","input":{"file_path":"/foo/bar/src/main.rs"}}]}}"#;
+        let events = parse_jsonl_line(line, "default");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].read_depth, ReadDepth::FullBody);
+        assert_eq!(
+            events[0].file_path.as_ref().unwrap(),
+            &PathBuf::from("/foo/bar/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn test_parse_grep_tool_call() {
+        let line = r#"{"type":"assistant","sessionId":"abc","message":{"role":"assistant","content":[{"type":"tool_use","name":"Grep","input":{"pattern":"AuthService"}}]}}"#;
+        let events = parse_jsonl_line(line, "default");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].read_depth, ReadDepth::Overview);
+    }
+
+    #[test]
+    fn test_ignores_user_messages() {
+        let line = r#"{"type":"user","message":{"role":"user","content":"hello"}}"#;
+        let events = parse_jsonl_line(line, "default");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_ignores_type_a() {
+        // "type":"A" does not appear in real logs; only "assistant" should be accepted.
+        let line = r#"{"type":"A","sessionId":"abc","message":{"role":"assistant","content":[{"type":"tool_use","name":"mcp__acp__Read","input":{"file_path":"/foo.rs"}}]}}"#;
+        let events = parse_jsonl_line(line, "default");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_is_uuid() {
+        assert!(is_uuid("c4d0275f-5c57-4192-962e-ada3c2efec60"));
+        assert!(is_uuid("07f66211-6835-43d3-91d5-e3468d705fc5"));
+        assert!(!is_uuid("agent-a09c164"));
+        assert!(!is_uuid("sessions-index"));
+        assert!(!is_uuid("not-a-uuid-at-all"));
+        assert!(!is_uuid(""));
+    }
+
+    #[test]
+    fn test_find_session_from_files() {
+        // Create a temp dir with UUID-named .jsonl files.
+        let tmp = tempfile::tempdir().unwrap();
+        let uuid1 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let uuid2 = "11111111-2222-3333-4444-555555555555";
+
+        // Write uuid1 first, then uuid2 (uuid2 should be newer).
+        let f1 = tmp.path().join(format!("{uuid1}.jsonl"));
+        fs::write(&f1, r#"{"type":"user","sessionId":"aaa"}"#).unwrap();
+        // Small sleep to ensure different mtimes.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let f2 = tmp.path().join(format!("{uuid2}.jsonl"));
+        fs::write(&f2, r#"{"type":"user","sessionId":"bbb"}"#).unwrap();
+
+        // Also create an agent file that should NOT be picked.
+        fs::write(
+            tmp.path().join("agent-abc123.jsonl"),
+            r#"{"type":"user"}"#,
+        )
+        .unwrap();
+
+        // Also create an empty UUID file that should be skipped.
+        fs::File::create(tmp.path().join("00000000-0000-0000-0000-000000000000.jsonl")).unwrap();
+
+        let result = find_session_from_files(tmp.path());
+        assert_eq!(result, Some(uuid2.to_string()));
+    }
+
+    #[test]
+    fn test_session_log_files_subagents_dir() {
+        // Create a temp dir mimicking the new format:
+        // <log_dir>/<session-id>.jsonl
+        // <log_dir>/<session-id>/subagents/agent-*.jsonl
+        let tmp = tempfile::tempdir().unwrap();
+        let session = "abcd1234-abcd-abcd-abcd-abcd12345678";
+
+        // Main session file.
+        let main_file = tmp.path().join(format!("{session}.jsonl"));
+        fs::write(&main_file, r#"{"type":"user"}"#).unwrap();
+
+        // Subagents directory.
+        let subagents_dir = tmp.path().join(session).join("subagents");
+        fs::create_dir_all(&subagents_dir).unwrap();
+        let agent_file = subagents_dir.join("agent-abc1234.jsonl");
+        fs::write(&agent_file, r#"{"type":"user","sessionId":"xxx"}"#).unwrap();
+
+        let files = session_log_files(tmp.path(), session);
+        assert!(files.contains(&main_file));
+        assert!(files.contains(&agent_file));
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_session_log_files_flat_agents() {
+        // Create a temp dir mimicking the old format:
+        // <log_dir>/<session-id>.jsonl
+        // <log_dir>/agent-*.jsonl (with matching sessionId)
+        let tmp = tempfile::tempdir().unwrap();
+        let session = "abcd1234-abcd-abcd-abcd-abcd12345678";
+
+        let main_file = tmp.path().join(format!("{session}.jsonl"));
+        fs::write(&main_file, r#"{"type":"user"}"#).unwrap();
+
+        // Agent file that belongs to this session.
+        let agent_ok = tmp.path().join("agent-match01.jsonl");
+        let mut f = fs::File::create(&agent_ok).unwrap();
+        writeln!(f, r#"{{"type":"user","sessionId":"{session}"}}"#).unwrap();
+
+        // Agent file that belongs to a different session.
+        let agent_other = tmp.path().join("agent-other01.jsonl");
+        fs::write(&agent_other, r#"{"type":"user","sessionId":"different-session"}"#).unwrap();
+
+        let files = session_log_files(tmp.path(), session);
+        assert!(files.contains(&main_file));
+        assert!(files.contains(&agent_ok));
+        assert!(!files.contains(&agent_other));
+    }
+}
