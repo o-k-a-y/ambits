@@ -1,6 +1,6 @@
 # marker
 
-Tool for visualizing parts of your codebase an Claude has stored within a session log.
+Tool for visualizing parts of your codebase Claude has stored within a session log.
 
 ![screenshot](./images/screenshot.png)
 
