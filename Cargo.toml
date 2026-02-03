@@ -1,7 +1,15 @@
 [package]
-name = "marker"
+name = "claude-marker"
 version = "0.1.0"
 edition = "2021"
+description = "command line utility for symbols used by Claude agents"
+repository = "https://github.com/joshLong145/claude-marker"
+license = "MIT"
+keywords = ["claude", "claude-code", "serena"]
+categories = ["command-line-utilities"]
+exclude = [
+    "images/*"
+]
 
 [dependencies]
 ratatui = "0.29"
@@ -20,3 +28,7 @@ serde-pickle = "1.2"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+name = "marker"
+path = "src/main.rs"

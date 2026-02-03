@@ -21,12 +21,18 @@ Tool for visualizing parts of your codebase Claude has stored within a session l
 - Rust
 - Python
 
-## Build
+## Building from source
 
 Requires Rust 1.70+.
 
 ```
 cargo build --release
+```
+
+## Installing through Cargo
+
+```
+cargo install claude-marker
 ```
 
 ## Usage
