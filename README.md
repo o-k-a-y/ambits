@@ -14,7 +14,8 @@ Tool for visualizing parts of your codebase Claude has stored within a session l
 
 ## Todo
 - multi agent heirchies
-- 
+- Multi session visualization
+
 ## Supported languages
 
 **Tree-sitter parsing:**
