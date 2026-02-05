@@ -105,6 +105,14 @@ impl App {
             let file_id = file_path.clone();
             let is_expanded = !self.collapsed.contains(&file_id);
 
+            // Compute file-level coverage: if any symbol in the file has been seen, mark file as having coverage
+            let file_has_coverage = has_file_coverage(&file.symbols, &self.ledger);
+            let file_read_depth = if file_has_coverage {
+                ReadDepth::NameOnly // Use NameOnly to indicate "has coverage"
+            } else {
+                ReadDepth::Unseen
+            };
+
             rows.push(TreeRow {
                 symbol_id: file_id.clone(),
                 display_name: file_path.clone(),
@@ -115,7 +123,7 @@ impl App {
                 has_children: !file.symbols.is_empty(),
                 line_range: format!("{} lines", file.total_lines),
                 token_count: 0,
-                read_depth: ReadDepth::Unseen,
+                read_depth: file_read_depth,
             });
 
             if is_expanded {
@@ -435,6 +443,19 @@ fn symbol_matches_target(sym: &SymbolNode, event: &AgentToolCall) -> bool {
     if let Some(ref target_range) = event.target_lines {
         // Check if symbol's line range overlaps with the target line range
         if sym.line_range.start < target_range.end && target_range.start < sym.line_range.end {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if any symbol in a file (recursively) has been seen by the agent.
+fn has_file_coverage(symbols: &[SymbolNode], ledger: &ContextLedger) -> bool {
+    for sym in symbols {
+        if ledger.depth_of(&sym.id) != ReadDepth::Unseen {
+            return true;
+        }
+        if has_file_coverage(&sym.children, ledger) {
             return true;
         }
     }

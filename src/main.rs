@@ -78,12 +78,20 @@ fn main() -> Result<()> {
     let log_dir = cli
         .log_dir
         .or_else(|| ingest::claude::log_dir_for_project(&project_path));
+    
+    let _ = std::fs::write("/tmp/marker-debug.txt", format!("log_dir: {:?}\n", log_dir));
 
     let session_id = cli.session.or_else(|| {
         log_dir
             .as_ref()
             .and_then(|d| ingest::claude::find_latest_session(d))
     });
+    
+    let _ = std::fs::OpenOptions::new().append(true).open("/tmp/marker-debug.txt")
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(f, "session_id: {:?}", session_id)
+        });
 
     // Launch TUI.
     enable_raw_mode()?;
@@ -99,9 +107,13 @@ fn main() -> Result<()> {
             .as_deref()
             .unwrap_or("unknown-session");
         let log_path = log_output_dir.join(format!("{log_name}.log"));
+        let _ = std::fs::write("/tmp/marker-log-debug.txt", format!("Creating log file at {:?}\n", log_path));
         let file = fs::File::create(&log_path)?;
+        let _ = std::fs::OpenOptions::new().append(true).open("/tmp/marker-log-debug.txt")
+            .and_then(|mut f| { use std::io::Write; writeln!(f, "Log file created successfully") });
         Some(io::BufWriter::new(file))
     } else {
+        let _ = std::fs::write("/tmp/marker-log-debug.txt", "log_output is None\n");
         None
     };
 
@@ -110,21 +122,46 @@ fn main() -> Result<()> {
 
     // Pre-populate the ledger from existing session logs.
     if let (Some(ref log_dir), Some(ref session_id)) = (&log_dir, &session_id) {
+        use std::io::Write;
+        let mut debug_file = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/marker-debug.txt").unwrap();
+        writeln!(debug_file, "=== ENTERING PRE-POPULATION ===").unwrap();
         let log_files = ingest::claude::session_log_files(log_dir, session_id);
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/marker-debug.txt")
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "Found {} log files for session {}", log_files.len(), session_id)
+            });
         for log_file in &log_files {
             let events = ingest::claude::parse_log_file(log_file);
+            let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/marker-debug.txt")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "Parsed {} events from {:?}", events.len(), log_file.file_name())
+                });
             for event in events {
                 app.process_agent_event(event);
             }
         }
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/marker-debug.txt")
+            .and_then(|mut f| {
+                use std::io::Write;
+                writeln!(f, "Finished pre-population. Total events in activity: {}", app.activity.len())
+            });
     }
 
     let serena_mode = cli.serena;
     let result = run_tui(&mut terminal, &mut app, &project_path, &log_dir, &session_id, &registry, serena_mode);
 
     // Flush event log before exiting.
+    let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/marker-log-debug.txt")
+        .and_then(|mut f| { 
+            use std::io::Write; 
+            writeln!(f, "About to flush. event_log is_some: {}", app.event_log.is_some())
+        });
     if let Some(ref mut writer) = app.event_log {
         let _ = writer.flush();
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/marker-log-debug.txt")
+            .and_then(|mut f| { use std::io::Write; writeln!(f, "Flushed event log") });
     }
 
     // Restore terminal.

@@ -15,7 +15,8 @@ pub fn log_dir_for_project(project_path: &Path) -> Option<PathBuf> {
     let canonical = project_path.canonicalize().ok()?;
     let slug = canonical
         .to_string_lossy()
-        .replace('/', "-");
+        .replace('/', "-")
+        .replace('.', "-");  // Claude Code also replaces dots with hyphens
     let home = dirs_home()?;
     let dir = home.join(".claude").join("projects").join(&slug);
     if dir.is_dir() {
@@ -264,8 +265,10 @@ fn map_tool_call(
 ) -> Option<AgentToolCall> {
     let (file_path, depth, desc, target_symbol, target_lines) = match tool_name {
         // Full file reads.
-        "mcp__acp__Read" | "Read" => {
-            let path = input.get("file_path").and_then(|v| v.as_str())?;
+        "mcp__acp__Read" | "Read" | "mcp__plugin_serena_serena__read_file" => {
+            let path = input.get("file_path")
+                .or_else(|| input.get("relative_path"))
+                .and_then(|v| v.as_str())?;
             // If offset and limit are present, compute a target line range.
             let target_lines = match (
                 input.get("offset").and_then(|v| v.as_u64()),
@@ -286,8 +289,11 @@ fn map_tool_call(
         }
 
         // Edits imply the file was read.
-        "mcp__acp__Edit" | "Edit" => {
-            let path = input.get("file_path").and_then(|v| v.as_str())?;
+        "mcp__acp__Edit" | "Edit"
+        | "mcp__plugin_serena_serena__replace_content" => {
+            let path = input.get("file_path")
+                .or_else(|| input.get("relative_path"))
+                .and_then(|v| v.as_str())?;
             (
                 Some(PathBuf::from(path)),
                 ReadDepth::FullBody,
@@ -298,8 +304,10 @@ fn map_tool_call(
         }
 
         // Write implies full knowledge.
-        "mcp__acp__Write" | "Write" => {
-            let path = input.get("file_path").and_then(|v| v.as_str())?;
+        "mcp__acp__Write" | "Write" | "mcp__plugin_serena_serena__create_text_file" => {
+            let path = input.get("file_path")
+                .or_else(|| input.get("relative_path"))
+                .and_then(|v| v.as_str())?;
             (
                 Some(PathBuf::from(path)),
                 ReadDepth::FullBody,
@@ -310,7 +318,8 @@ fn map_tool_call(
         }
 
         // Glob/find: name-level awareness.
-        "Glob" | "mcp__serena__find_file" | "mcp__serena__list_dir" => {
+        "Glob" | "mcp__serena__find_file" | "mcp__serena__list_dir"
+        | "mcp__plugin_serena_serena__find_file" | "mcp__plugin_serena_serena__list_dir" => {
             let pattern = input
                 .get("pattern")
                 .or_else(|| input.get("file_mask"))
@@ -324,7 +333,8 @@ fn map_tool_call(
         }
 
         // Grep/search: overview-level.
-        "Grep" | "mcp__serena__search_for_pattern" => {
+        "Grep" | "mcp__serena__search_for_pattern"
+        | "mcp__plugin_serena_serena__search_for_pattern" => {
             let pattern = input
                 .get("pattern")
                 .or_else(|| input.get("substring_pattern"))
@@ -338,7 +348,8 @@ fn map_tool_call(
         }
 
         // Serena symbol overview.
-        "mcp__serena__get_symbols_overview" => {
+        "mcp__serena__get_symbols_overview"
+        | "mcp__plugin_serena_serena__get_symbols_overview" => {
             let path = input.get("relative_path").and_then(|v| v.as_str());
             (
                 path.map(PathBuf::from),
@@ -350,7 +361,8 @@ fn map_tool_call(
         }
 
         // Serena find_symbol: depth depends on include_body.
-        "mcp__serena__find_symbol" => {
+        "mcp__serena__find_symbol"
+        | "mcp__plugin_serena_serena__find_symbol" => {
             let include_body = input
                 .get("include_body")
                 .and_then(|v| v.as_bool())
@@ -379,7 +391,8 @@ fn map_tool_call(
         }
 
         // Serena find_referencing_symbols: overview-level.
-        "mcp__serena__find_referencing_symbols" => {
+        "mcp__serena__find_referencing_symbols"
+        | "mcp__plugin_serena_serena__find_referencing_symbols" => {
             let name = input
                 .get("name_path")
                 .and_then(|v| v.as_str())
@@ -399,7 +412,8 @@ fn map_tool_call(
         }
 
         // Serena replace_symbol_body: full body read.
-        "mcp__serena__replace_symbol_body" => {
+        "mcp__serena__replace_symbol_body"
+        | "mcp__plugin_serena_serena__replace_symbol_body" => {
             let name = input
                 .get("name_path")
                 .and_then(|v| v.as_str())
@@ -419,7 +433,8 @@ fn map_tool_call(
         }
 
         // Serena insert_after_symbol: full body read.
-        "mcp__serena__insert_after_symbol" => {
+        "mcp__serena__insert_after_symbol"
+        | "mcp__plugin_serena_serena__insert_after_symbol" => {
             let name = input
                 .get("name_path")
                 .and_then(|v| v.as_str())
@@ -439,7 +454,8 @@ fn map_tool_call(
         }
 
         // Serena insert_before_symbol: full body read.
-        "mcp__serena__insert_before_symbol" => {
+        "mcp__serena__insert_before_symbol"
+        | "mcp__plugin_serena_serena__insert_before_symbol" => {
             let name = input
                 .get("name_path")
                 .and_then(|v| v.as_str())
@@ -459,7 +475,8 @@ fn map_tool_call(
         }
 
         // Serena rename_symbol: full body read.
-        "mcp__serena__rename_symbol" => {
+        "mcp__serena__rename_symbol"
+        | "mcp__plugin_serena_serena__rename_symbol" => {
             let name = input
                 .get("name_path")
                 .and_then(|v| v.as_str())

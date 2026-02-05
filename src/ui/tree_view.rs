@@ -40,9 +40,15 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             ];
 
             if row.is_file {
+                // Use a noticeable color if the file has coverage
+                let file_color = if row.read_depth != ReadDepth::Unseen {
+                    Color::Rgb(80, 220, 120) // Bright green for files with coverage
+                } else {
+                    Color::White // White for files without coverage
+                };
                 spans.push(Span::styled(
                     &row.display_name,
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default().fg(file_color).add_modifier(Modifier::BOLD),
                 ));
                 spans.push(Span::styled(
                     format!("  ({})", row.line_range),
