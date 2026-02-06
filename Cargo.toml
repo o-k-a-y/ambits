@@ -1,5 +1,5 @@
 [package]
-name = "claude-marker"
+name = "ambit"
 version = "0.3.0"
 edition = "2021"
 description = "command line utility for symbols used by Claude agents"
