@@ -1,4 +1,4 @@
-# ambit
+# ambits
 
 Tool for visualizing parts of your codebase an LLM agent has stored within a session log.
 
@@ -36,13 +36,13 @@ cargo build --release
 ## Installing through Cargo
 
 ```
-cargo install ambit
+cargo install ambits
 ```
 
 ## Usage
 
 ```
-ambit --project <path>
+ambits --project <path>
 ```
 
 ### Flags
@@ -59,13 +59,13 @@ ambit --project <path>
 
 ```
 # Launch TUI for current project
-ambit -p .
+ambits -p .
 
 # Dump symbol tree without TUI
-ambit -p . --dump
+ambits -p . --dump
 
 # Use Serena's symbol cache (more languages, finer detail)
-ambit -p . --serena
+ambits -p . --serena
 ```
 
 ### Keybindings

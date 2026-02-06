@@ -33,6 +33,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "ambit"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "crossterm",
+ "notify",
+ "ratatui",
+ "serde",
+ "serde-pickle",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tree-sitter",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+]
+
+[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -206,26 +226,6 @@ name = "clap_lex"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e64b0cc0439b12df2fa678eae89a1c56a529fd067a9115f7827f1fffd22b32"
-
-[[package]]
-name = "claude-marker"
-version = "0.3.0"
-dependencies = [
- "clap",
- "color-eyre",
- "crossterm",
- "notify",
- "ratatui",
- "serde",
- "serde-pickle",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tree-sitter",
- "tree-sitter-python",
- "tree-sitter-rust",
-]
 
 [[package]]
 name = "color-eyre"

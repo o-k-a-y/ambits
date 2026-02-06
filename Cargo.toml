@@ -1,5 +1,5 @@
 [package]
-name = "ambit"
+name = "ambits"
 version = "0.3.0"
 edition = "2021"
 description = "command line utility for symbols used by Claude agents"
@@ -30,5 +30,5 @@ serde-pickle = "1.2"
 tempfile = "3"
 
 [[bin]]
-name = "ambit"
+name = "ambits"
 path = "src/main.rs"
