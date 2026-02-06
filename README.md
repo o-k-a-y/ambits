@@ -1,24 +1,27 @@
-# marker
+# ambit
 
-Tool for visualizing parts of your codebase Claude has stored within a session log.
+Tool for visualizing parts of your codebase an LLM agent has stored within a session log.
 
 ![screenshot](./images/screenshot.png)
 
 ## What it does
-
-- Parses your project into a hierarchical symbol tree (functions, structs, classes, methods, etc.)
 - Monitors Claude Code's JSONL session logs in real time
 - Colors each symbol by how deeply the agent has read it: unseen, name-only, overview, signature, or full body
 - Detects when source files change and marks previously-read symbols as stale
-- supports parsing [Serena MCP](https://github.com/oraios/serena) symbol artifacts.
+- Supports parsing [Serena MCP](https://github.com/oraios/serena) symbol artifacts.
+- Supports Tree sitter parsing for
+  - Rust
+  - Python
+- Symbol Dumps (Coverage reports coming soon)
 
 ## Todo
+- Coverage reports
 - multi agent heirchies
 - Multi session visualization
 
 ## Supported languages
 
-**Tree-sitter parsing:**
+**Tree-sitter parsing**
 - Rust
 - Python
 
@@ -33,13 +36,13 @@ cargo build --release
 ## Installing through Cargo
 
 ```
-cargo install claude-marker
+cargo install ambit
 ```
 
 ## Usage
 
 ```
-marker --project <path>
+ambit --project <path>
 ```
 
 ### Flags
@@ -56,13 +59,13 @@ marker --project <path>
 
 ```
 # Launch TUI for current project
-marker -p .
+ambit -p .
 
 # Dump symbol tree without TUI
-marker -p . --dump
+ambit -p . --dump
 
 # Use Serena's symbol cache (more languages, finer detail)
-marker -p . --serena
+ambit -p . --serena
 ```
 
 ### Keybindings

@@ -30,5 +30,5 @@ serde-pickle = "1.2"
 tempfile = "3"
 
 [[bin]]
-name = "marker"
+name = "ambit"
 path = "src/main.rs"
