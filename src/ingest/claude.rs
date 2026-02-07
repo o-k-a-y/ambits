@@ -30,38 +30,10 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Find the most recent session ID. Tries sessions-index.json first (legacy),
-/// then falls back to scanning for UUID-named .jsonl files by modification time.
+/// Find the most recent session ID by scanning for UUID-named .jsonl files
+/// and selecting the one with the most recent modification time.
 pub fn find_latest_session(log_dir: &Path) -> Option<String> {
-    // Try sessions-index.json first (present in older Claude Code versions).
-    if let Some(session) = find_session_from_index(log_dir) {
-        return Some(session);
-    }
-    // Fall back: scan for UUID-named .jsonl files, pick most recent by mtime.
     find_session_from_files(log_dir)
-}
-
-/// Try to find the latest session from sessions-index.json.
-fn find_session_from_index(log_dir: &Path) -> Option<String> {
-    let index_path = log_dir.join("sessions-index.json");
-    let data = fs::read_to_string(&index_path).ok()?;
-    let obj: Value = serde_json::from_str(&data).ok()?;
-    let entries = obj.get("entries")?.as_array()?;
-
-    entries
-        .iter()
-        .filter(|e| {
-            !e.get("isSidechain")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
-        .max_by_key(|e| {
-            e.get("modified")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        })
-        .and_then(|e| e.get("sessionId")?.as_str().map(|s| s.to_string()))
 }
 
 /// Find the latest session by scanning for UUID-named .jsonl files.
