@@ -4,6 +4,7 @@ mod events;
 mod ingest;
 mod parser;
 mod serena;
+mod skill;
 mod symbols;
 mod tracking;
 mod ui;
@@ -15,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use clap::Parser as ClapParser;
+use clap::{Parser as ClapParser, Subcommand};
 use color_eyre::eyre::Result;
 use crossterm::{
     execute,
@@ -31,11 +32,11 @@ use parser::ParserRegistry;
 use symbols::{FileSymbols, ProjectTree};
 
 #[derive(ClapParser, Debug)]
-#[command(name = "context-graph", about = "Visualize LLM agent context coverage")]
+#[command(name = "ambits", about = "Visualize LLM agent context coverage")]
 struct Cli {
     /// Path to the project root to analyze.
     #[arg(short, long)]
-    project: PathBuf,
+    project: Option<PathBuf>,
 
     /// Optional session ID to track (auto-detects latest if omitted).
     #[arg(short, long)]
@@ -60,13 +61,52 @@ struct Cli {
     /// Output directory for event logs. If set, writes processed events to <dir>/<session>.log.
     #[arg(long)]
     log_output: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Manage the Claude Code skill for ambit
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SkillCommands {
+    /// Install the ambit skill for Claude Code
+    Install {
+        /// Install globally to ~/.claude/skills/ambit/ (available in all projects)
+        #[arg(long, short)]
+        global: bool,
+
+        /// Install to a specific project directory
+        #[arg(long, short)]
+        project: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
-    let project_path = cli.project.canonicalize().unwrap_or(cli.project.clone());
+    // Handle subcommands first (don't require --project).
+    if let Some(command) = cli.command {
+        return match command {
+            Commands::Skill { command } => match command {
+                SkillCommands::Install { global, project } => skill::install(global, project),
+            },
+        };
+    }
+
+    // Original behavior — require --project for all other modes.
+    let project = cli.project.ok_or_else(|| {
+        color_eyre::eyre::eyre!("--project is required (use `ambits --project <path>`)")
+    })?;
+    let project_path = project.canonicalize().unwrap_or(project);
     let registry = ParserRegistry::new();
     let project_tree = if cli.serena {
         serena::scan_project_serena(&project_path)?

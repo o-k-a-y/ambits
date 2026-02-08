@@ -91,6 +91,36 @@ TOTAL                                         214     182     175     85%     82
 - **Seen%**: Symbols the agent has any awareness of (name, overview, signature, or full body)
 - **Full%**: Symbols the agent has read completely (full body)
 
+## Claude Code Skill
+
+ambits ships with a [Claude Code skill](https://code.claude.com/docs/en/skills) that lets you check coverage directly from a Claude Code session using `/ambit`.
+
+### Installing the skill
+
+```bash
+# Install globally (available in all your projects)
+ambits skill install --global
+
+# Install into the current project only
+ambits skill install
+
+# Install into a specific project
+ambits skill install --project /path/to/project
+```
+
+Global installs go to `~/.claude/skills/ambit/`. Project installs go to `.claude/skills/ambit/` within the target directory.
+
+### Using the skill
+
+Once installed, use `/ambit` in Claude Code:
+
+```
+/ambit                    # Check coverage for current project
+/ambit --session <id>     # Check a specific session
+```
+
+Claude will run the appropriate `ambits` commands and interpret the coverage results, highlighting blind spots and suggesting files to read for better understanding.
+
 ### Keybindings
 
 | Key | Action |
