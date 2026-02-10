@@ -1,28 +1,31 @@
 # ambits
 
-Tool for visualizing parts of your codebase an LLM agent has stored within a session log.
+When an AI coding agent works on your project, it reads files, greps for patterns, and inspects symbols — but you have no way to see what it actually looked at. **ambits** gives you that visibility.
+
+It's a real-time TUI that watches Claude Code session logs and paints every function, struct, and class in your codebase by how deeply the agent has read it. At a glance you can see blind spots the agent missed, stale reads that are out of date, and exactly how much of your project the agent actually understands.
 
 ![screenshot](./images/screenshot.png)
 
-## What it does
-- Monitors Claude Code's JSONL session logs in real time
-- Colors each symbol by how deeply the agent has read it: unseen, name-only, overview, signature, or full body
-- Detects when source files change and marks previously-read symbols as stale
-- Supports parsing [Serena MCP](https://github.com/oraios/serena) symbol artifacts.
-- Supports Tree sitter parsing for
-  - Rust
-  - Python
-- Symbol dumps and coverage reports
+## Features
 
-## Todo
-- Multi agent hierarchies
-- Multi session visualization
+- **Real-time session monitoring** — Tails Claude Code's JSONL session logs as the agent works, updating the display live
+- **Depth-aware coverage** — Every symbol is color-coded by read depth: unseen, name-only, overview, signature, or full body
+- **Staleness detection** — When source files change on disk, previously-read symbols are automatically marked stale so you know what needs a re-read
+- **Coverage reports** — Generate tabular per-file coverage summaries for CI or quick audits
+- **Sortable tree view** — Toggle between alphabetical and coverage-grouped ordering to surface partially-covered files first
+- **Multiple parsing backends** — Tree-sitter for fast local parsing, or [Serena MCP](https://github.com/oraios/serena) for richer LSP-based symbol data across more languages
 
-## Supported languages
+## Supported Languages
 
-**Tree-sitter parsing**
-- Rust
-- Python
+| Backend | Languages |
+|---|---|
+| Tree-sitter | Rust, Python |
+| Serena MCP | Any language Serena supports |
+
+## Roadmap
+
+- Multi-agent hierarchy visualization
+- Multi-session comparison
 
 ## Building from source
 
@@ -74,7 +77,7 @@ ambits -p . --serena
 
 ### Coverage Report
 
-The `--coverage` flag outputs a tabular report showing per-file symbol visibility:
+The `--coverage` flag prints a per-file breakdown of how much the agent has seen, useful for quick audits or piping into CI checks:
 
 ```
 Coverage Report (session: 34e212cf-a176-4059-ba12-eca94b56e43b)
@@ -93,7 +96,7 @@ TOTAL                                         214     182     175     85%     82
 
 ## Claude Code Skill
 
-ambits ships with a [Claude Code skill](https://code.claude.com/docs/en/skills) that lets you check coverage directly from a Claude Code session using `/ambit`.
+ambits includes a [Claude Code skill](https://code.claude.com/docs/en/skills) so you can check coverage without leaving your editor. Type `/ambit` in any Claude Code session to get an instant coverage summary.
 
 ### Installing the skill
 
@@ -129,11 +132,14 @@ Claude will run the appropriate `ambits` commands and interpret the coverage res
 | `h` / `l` | Collapse/expand |
 | `Enter` | Toggle expand |
 | `/` | Search symbols |
+| `s` | Toggle sort (alphabetical / coverage) |
 | `a` | Cycle agent filter |
 | `Tab` | Switch panel focus |
 | `q` | Quit |
 
-### Color legend
+### Color Legend
+
+**Symbol colors** (by read depth):
 
 | Color | Meaning |
 |---|---|
@@ -143,3 +149,11 @@ Claude will run the appropriate `ambits` commands and interpret the coverage res
 | Blue | Signature seen |
 | Green | Full body read |
 | Orange | Stale (source changed since last read) |
+
+**File header colors** (by coverage status):
+
+| Color | Meaning |
+|---|---|
+| White | No symbols read at full body depth |
+| Amber | Partially covered (some symbols read fully) |
+| Green | Fully covered (all symbols read at full body depth) |
