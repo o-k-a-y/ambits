@@ -4,10 +4,27 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
+use crate::coverage::count_symbols;
 use crate::symbols::{ProjectTree, SymbolNode};
 use crate::tracking::ReadDepth;
 use crate::tracking::ContextLedger;
 use crate::ingest::AgentToolCall;
+
+/// How files are sorted in the tree view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortMode {
+    Alphabetical,
+    ByCoverage,
+}
+
+/// Three-state coverage classification for files.
+/// Variant order gives the desired sort: Partially → Fully → Not Covered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FileCoverageStatus {
+    PartiallyCovered,
+    FullyCovered,
+    NotCovered,
+}
 
 /// A flattened row in the tree view, ready for rendering.
 #[derive(Debug, Clone)]
@@ -22,6 +39,7 @@ pub struct TreeRow {
     pub line_range: String,
     pub token_count: usize,
     pub read_depth: ReadDepth,
+    pub coverage_status: Option<FileCoverageStatus>,
 }
 
 /// Which panel is focused.
@@ -55,6 +73,9 @@ pub struct App {
     // Focus.
     pub focus: FocusPanel,
 
+    // Sort mode for tree view.
+    pub sort_mode: SortMode,
+
     // Search.
     pub search_mode: bool,
     pub search_query: String,
@@ -87,6 +108,7 @@ impl App {
             agents_seen: Vec::new(),
             agent_filter: None,
             focus: FocusPanel::Tree,
+            sort_mode: SortMode::Alphabetical,
             search_mode: false,
             search_query: String::new(),
             session_id: None,
@@ -100,14 +122,35 @@ impl App {
     pub fn rebuild_tree_rows(&mut self) {
         let mut rows = Vec::new();
 
-        for file in &self.project_tree.files {
+        // Build iteration order: sorted by coverage status if ByCoverage mode is active.
+        let file_indices: Vec<usize> = if self.sort_mode == SortMode::ByCoverage {
+            let mut indices: Vec<(FileCoverageStatus, &std::path::Path, usize)> = self
+                .project_tree
+                .files
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    (
+                        file_coverage_status(&f.symbols, &self.ledger),
+                        f.file_path.as_path(),
+                        i,
+                    )
+                })
+                .collect();
+            indices.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            indices.into_iter().map(|(_, _, i)| i).collect()
+        } else {
+            (0..self.project_tree.files.len()).collect()
+        };
+
+        for &idx in &file_indices {
+            let file = &self.project_tree.files[idx];
             let file_path = file.file_path.to_string_lossy().to_string();
             let file_id = file_path.clone();
             let is_expanded = !self.collapsed.contains(&file_id);
 
-            // Compute file-level coverage: if any symbol in the file has been seen, mark file as having coverage
-            let file_has_coverage = has_file_coverage(&file.symbols, &self.ledger);
-            let file_read_depth = if file_has_coverage {
+            let status = file_coverage_status(&file.symbols, &self.ledger);
+            let file_read_depth = if status != FileCoverageStatus::NotCovered {
                 ReadDepth::NameOnly // Use NameOnly to indicate "has coverage"
             } else {
                 ReadDepth::Unseen
@@ -124,6 +167,7 @@ impl App {
                 line_range: format!("{} lines", file.total_lines),
                 token_count: 0,
                 read_depth: file_read_depth,
+                coverage_status: Some(status),
             });
 
             if is_expanded {
@@ -156,6 +200,13 @@ impl App {
             KeyCode::Char('/') => {
                 self.search_mode = true;
                 self.search_query.clear();
+            }
+            KeyCode::Char('s') => {
+                self.sort_mode = match self.sort_mode {
+                    SortMode::Alphabetical => SortMode::ByCoverage,
+                    SortMode::ByCoverage => SortMode::Alphabetical,
+                };
+                self.rebuild_tree_rows();
             }
             KeyCode::Char('a') => self.cycle_agent_filter(),
             KeyCode::Tab => self.cycle_focus(),
@@ -368,6 +419,7 @@ fn flatten_symbol(
         line_range: format!("L{}-{}", sym.line_range.start, sym.line_range.end),
         token_count: sym.estimated_tokens,
         read_depth,
+        coverage_status: None,
     });
 
     if is_expanded {
@@ -457,15 +509,17 @@ fn symbol_matches_target(sym: &SymbolNode, event: &AgentToolCall) -> bool {
     false
 }
 
-/// Check if any symbol in a file (recursively) has been seen by the agent.
-fn has_file_coverage(symbols: &[SymbolNode], ledger: &ContextLedger) -> bool {
-    for sym in symbols {
-        if ledger.depth_of(&sym.id) != ReadDepth::Unseen {
-            return true;
-        }
-        if has_file_coverage(&sym.children, ledger) {
-            return true;
-        }
+/// Classify a file's coverage as fully covered, partially covered, or not covered.
+/// "Fully covered" means every symbol has been read at FullBody depth.
+fn file_coverage_status(symbols: &[SymbolNode], ledger: &ContextLedger) -> FileCoverageStatus {
+    let (total, _seen, full) = count_symbols(symbols, ledger);
+    if total == 0 || full == 0 {
+        FileCoverageStatus::NotCovered
+    } else if full == total {
+        FileCoverageStatus::FullyCovered
+    } else {
+        FileCoverageStatus::PartiallyCovered
     }
-    false
 }
+
+

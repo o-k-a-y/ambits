@@ -116,7 +116,7 @@ impl CoverageReport {
 }
 
 /// Count symbols recursively, returning (total, seen_count, full_count).
-fn count_symbols(symbols: &[SymbolNode], ledger: &ContextLedger) -> (usize, usize, usize) {
+pub fn count_symbols(symbols: &[SymbolNode], ledger: &ContextLedger) -> (usize, usize, usize) {
     let mut total = 0;
     let mut seen = 0;
     let mut full = 0;

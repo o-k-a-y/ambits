@@ -5,7 +5,7 @@ pub mod activity;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 
-use crate::app::App;
+use crate::app::{App, SortMode};
 
 pub fn render(f: &mut Frame, app: &App) {
     let outer = Layout::default()
@@ -52,6 +52,11 @@ fn render_status_bar(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             Span::raw("expand "),
             Span::styled("[/]", Style::default().fg(Color::DarkGray)),
             Span::raw("search "),
+            Span::styled("[s]", Style::default().fg(Color::DarkGray)),
+            Span::raw(match app.sort_mode {
+                SortMode::Alphabetical => "ort:A-Z ",
+                SortMode::ByCoverage => "ort:cov ",
+            }),
             Span::styled("[a]", Style::default().fg(Color::DarkGray)),
             Span::raw("gents "),
             Span::styled("[tab]", Style::default().fg(Color::DarkGray)),

@@ -4,7 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
-use crate::app::{App, FocusPanel};
+use crate::app::{App, FileCoverageStatus, FocusPanel};
 use crate::tracking::ReadDepth;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
@@ -40,11 +40,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             ];
 
             if row.is_file {
-                // Use a noticeable color if the file has coverage
-                let file_color = if row.read_depth != ReadDepth::Unseen {
-                    Color::Rgb(80, 220, 120) // Bright green for files with coverage
-                } else {
-                    Color::White // White for files without coverage
+                let file_color = match row.coverage_status {
+                    Some(FileCoverageStatus::FullyCovered) => Color::Rgb(80, 220, 120),
+                    Some(FileCoverageStatus::PartiallyCovered) => Color::Rgb(255, 180, 50),
+                    _ => Color::White,
                 };
                 spans.push(Span::styled(
                     &row.display_name,
